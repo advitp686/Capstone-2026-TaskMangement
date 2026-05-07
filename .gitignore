@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.db
+*.sqlite3
+
+# Large files and directories
+models/
+bonsai/
+llama-cpp/
+artifacts/
+.claude/

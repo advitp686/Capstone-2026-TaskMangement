@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adaptive-planner"
+version = "0.1.0"
+description = "Backend-first adaptive task planning system."
+requires-python = ">=3.11"
+dependencies = [
+  "requests>=2.31",
+  "fastapi>=0.125.0",
+  "uvicorn>=0.43.0",
+  "httpx>=0.28.1",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

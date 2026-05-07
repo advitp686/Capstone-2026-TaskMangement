@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adaptive Planner Web UI</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">Adaptive Planning MVP</p>
+      <h1>Adaptive Planner</h1>
+      <p class="subtle">Cleaner workflow, same backend functionality.</p>
+    </div>
+  </header>
+
+  <main class="shell">
+    <aside class="sidebar">
+      <section class="panel controls-panel">
+        <div class="panel-header">
+          <h2>Workspace</h2>
+          <div class="status-group">
+            <span id="healthStatus" class="status-pill">unknown</span>
+            <div class="backend-indicator" id="backendIndicator">
+              <span id="backendDot" class="status-dot idle"></span>
+              <span id="backendLabel">idle</span>
+            </div>
+          </div>
+        </div>
+        <div class="stack-form">
+          <label>
+            Planner
+            <select id="plannerMode">
+              <option value="mock">mock</option>
+              <option value="gemma">gemma</option>
+            </select>
+          </label>
+          <div class="actions">
+            <button id="healthButton" type="button">Check Health</button>
+            <button id="refreshButton" type="button">Refresh</button>
+          </div>
+          <div class="actions">
+            <button id="deliverRemindersButton" type="button">Deliver Reminders</button>
+            <a class="docs-link" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel grow">
+        <div class="panel-header">
+          <h2>Plans</h2>
+          <button id="refreshPlansButton" type="button">Refresh List</button>
+        </div>
+        <div id="planList" class="list-panel"></div>
+      </section>
+
+      <details id="createPanel" class="panel create-panel">
+        <summary>Create New Plan</summary>
+        <form id="createPlanForm" class="stack-form">
+          <label>
+            Title
+            <input id="createTitle" name="title" required>
+          </label>
+          <label>
+            Description
+            <textarea id="createDescription" name="description" rows="4" required></textarea>
+          </label>
+          <div class="two-col">
+            <label>
+              Start Date
+              <input id="createStartDate" name="target_start_date" type="date" required>
+            </label>
+            <label>
+              End Date
+              <input id="createEndDate" name="target_end_date" type="date" required>
+            </label>
+          </div>
+          <fieldset class="availability">
+            <legend>Availability</legend>
+            <div id="availabilityGrid"></div>
+          </fieldset>
+          <label class="checkbox-row">
+            <input id="autoApprove" type="checkbox" checked>
+            Auto approve and schedule
+          </label>
+          <button type="submit">Create Plan</button>
+        </form>
+      </details>
+    </aside>
+
+    <section class="content">
+      <section class="panel plan-header-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Selected Plan</p>
+            <h2 id="currentPlanTitle">No plan selected</h2>
+          </div>
+          <div class="actions">
+            <button id="approvePlanButton" type="button">Approve</button>
+            <button id="reschedulePlanButton" type="button">Reschedule</button>
+            <button id="refreshPlanButton" type="button">Refresh Detail</button>
+          </div>
+        </div>
+        <div id="planSummary" class="summary-grid">
+          <div class="empty-state">Select a plan to inspect it.</div>
+        </div>
+      </section>
+
+      <section class="panel tabs-panel">
+        <div class="tab-bar">
+          <button type="button" class="tab-button active" data-tab-target="overview">Overview</button>
+          <button type="button" class="tab-button" data-tab-target="tasks">Tasks</button>
+          <button type="button" class="tab-button" data-tab-target="proposals">Proposals</button>
+          <button type="button" class="tab-button" data-tab-target="schedule">Schedule</button>
+          <button type="button" class="tab-button" data-tab-target="reminders">Reminders</button>
+          <button type="button" class="tab-button" data-tab-target="policy">Policy</button>
+          <button type="button" class="tab-button" data-tab-target="activity">Activity</button>
+        </div>
+
+        <section id="tab-overview" class="tab-pane active">
+          <div class="overview-grid">
+            <section class="subpanel">
+              <div class="panel-header">
+                <h3>Manual Replan</h3>
+                <button id="generateReplanButton" type="button">Generate Replan</button>
+              </div>
+              <div class="two-col">
+                <label>
+                  Trigger Task Id
+                  <input id="replanTaskId" type="number" min="1" placeholder="optional">
+                </label>
+                <label>
+                  Reason
+                  <input id="replanReason" type="text" value="Manual review requested from web UI.">
+                </label>
+              </div>
+            </section>
+
+            <section class="subpanel">
+              <h3>Reasoning Snapshot</h3>
+              <div id="overviewNarrative" class="narrative-box">
+                Select a plan to see summary, rationale, and goal details.
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="tab-tasks" class="tab-pane">
+          <section class="subpanel">
+            <div class="panel-header">
+              <h3>Tasks</h3>
+              <div class="task-status-row">
+                <span id="taskStatusBadge" class="status-badge idle">pending</span>
+                <span id="selectedTaskLabel" class="subtle">No task selected</span>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Select</th>
+                    <th>Id</th>
+                    <th>Status</th>
+                    <th>Title</th>
+                    <th>Minutes</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody id="tasksTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div id="taskWorkspaceEmpty" class="empty-state">Select a task to edit it or send feedback.</div>
+
+          <div id="taskWorkspace" class="workspace-grid hidden">
+            <form id="editTaskForm" class="subpanel stack-form">
+              <h3>Edit Task</h3>
+              <label>
+                Title
+                <input id="editTitle" type="text">
+              </label>
+              <label>
+                Estimated Minutes
+                <input id="editMinutes" type="number" min="1">
+              </label>
+              <label>
+                Target Date
+                <input id="editTargetDate" type="date">
+              </label>
+              <label class="checkbox-row">
+                <input id="regenerateSchedule" type="checkbox" checked>
+                Regenerate schedule after edit
+              </label>
+              <button type="submit">Save Task Edit</button>
+            </form>
+
+            <form id="feedbackForm" class="subpanel stack-form">
+              <h3>Task Feedback</h3>
+              <label>
+                Status
+                <select id="feedbackStatus">
+                  <option value="done">done</option>
+                  <option value="delayed">delayed</option>
+                  <option value="blocked" selected>blocked</option>
+                  <option value="failed">failed</option>
+                  <option value="skipped">skipped</option>
+                </select>
+              </label>
+              <label>
+                Actual Minutes
+                <input id="feedbackMinutes" type="number" min="1">
+              </label>
+              <label>
+                Difficulty (1-5)
+                <input id="feedbackDifficulty" type="number" min="1" max="5" value="3">
+              </label>
+              <label>
+                Confidence (0-1)
+                <input id="feedbackConfidence" type="number" min="0" max="1" step="0.1" value="0.5">
+              </label>
+              <label>
+                Note
+                <textarea id="feedbackNote" rows="4">Plan needs revision after execution friction.</textarea>
+              </label>
+              <button type="submit">Send Feedback</button>
+            </form>
+          </div>
+        </section>
+
+        <section id="tab-proposals" class="tab-pane">
+          <section class="subpanel">
+            <div class="panel-header">
+              <h3>Proposals</h3>
+              <div class="actions">
+                <button id="applyProposalButton" type="button">Apply Proposal</button>
+                <button id="rejectProposalButton" type="button">Reject Proposal</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Select</th>
+                    <th>Id</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="proposalsTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div id="proposalWorkspaceEmpty" class="empty-state">Select a proposal to inspect its payload.</div>
+          <section id="proposalWorkspace" class="subpanel hidden">
+            <h3 id="selectedProposalLabel">No proposal selected</h3>
+            <pre id="proposalPayload" class="json-box">Select a proposal to inspect its payload.</pre>
+          </section>
+        </section>
+
+        <section id="tab-schedule" class="tab-pane">
+          <div class="workspace-grid">
+            <section class="subpanel">
+              <h3>Dependencies</h3>
+              <div id="dependenciesPanel" class="list-panel"></div>
+            </section>
+
+            <section class="subpanel">
+              <h3>Schedule Blocks</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Task</th>
+                      <th>Start</th>
+                      <th>End</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="scheduleTableBody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="tab-reminders" class="tab-pane">
+          <section class="subpanel">
+            <h3>Reminders</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Task</th>
+                    <th>At</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="remindersTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="tab-policy" class="tab-pane">
+          <section class="subpanel">
+            <h3>Policy Decisions</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Task</th>
+                    <th>Action</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="policyTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="tab-activity" class="tab-pane">
+          <section class="subpanel">
+            <h3>Activity Log</h3>
+            <pre id="activityLog" class="log-box"></pre>
+          </section>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <div>
+        <strong id="loadingTitle">Working...</strong>
+        <p id="loadingHint" class="subtle">Gemma planning can take up to a minute on CPU.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
