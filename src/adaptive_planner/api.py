@@ -12,6 +12,11 @@ from fastapi.staticfiles import StaticFiles
 
 from .api_models import (
     ApplyProposalRequest,
+    AssistantIntakeRequest,
+    AssistantIntakeResponse,
+    AssistantMessageRequest,
+    AssistantMessageResponse,
+    ClarificationQuestion,
     CreatePlanRequest,
     CreatePlanResponse,
     DeliverRemindersRequest,
@@ -21,10 +26,15 @@ from .api_models import (
     FeedbackResponse,
     GenerateReplanRequest,
     PlanDetailResponse,
+    PlanHistoryResponse,
+    PlanVersionHistoryItem,
     PlanSummaryResponse,
     ProposalResponse,
+    SearchResultResponse,
     ScheduleActionResponse,
+    SuggestedAction,
 )
+from .assistant import PlanningAssistant
 from .domain import FeedbackInput, GoalInput, PlanStatus, PlanningRequest, ProposalKind, TaskStatus
 from .gemma_adapter import GemmaPlannerBackend, GemmaPlannerConfig
 from .planner import MockPlannerBackend, PlannerBackend
@@ -46,6 +56,7 @@ class AppContainer:
         self.database = PlannerDatabase(database_path)
         self.database.initialize()
         self.reminder_service = ReminderService(self.database)
+        self.assistant = PlanningAssistant()
         self.gemma_config = gemma_config or GemmaPlannerConfig()
         self._planners: dict[str, PlannerBackend] = {}
 
@@ -100,6 +111,41 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/assistant/intake", response_model=AssistantIntakeResponse)
+    def assistant_intake(request: AssistantIntakeRequest) -> AssistantIntakeResponse:
+        result = container.assistant.run_intake(
+            title=request.title,
+            description=request.description,
+            target_start_date=request.target_start_date,
+            target_end_date=request.target_end_date,
+            references=[reference.dict() for reference in request.references],
+            clarification_answers=request.clarification_answers,
+            use_web_search=request.use_web_search,
+        )
+        return AssistantIntakeResponse(
+            requires_clarification=result.requires_clarification,
+            questions=[
+                ClarificationQuestion(
+                    id=question.id,
+                    prompt=question.prompt,
+                    recommended_option=question.recommended_option,
+                    options=question.options,
+                    allow_custom=question.allow_custom,
+                )
+                for question in result.questions
+            ],
+            readiness_summary=result.readiness_summary,
+            assistant_summary=result.assistant_summary,
+            references_summary=result.references_summary,
+            web_search_used=result.web_search_used,
+            web_search_available=result.web_search_available,
+            web_search_message=result.web_search_message,
+            search_results=[
+                SearchResultResponse(title=item.title, url=item.url, content=item.content)
+                for item in result.search_results
+            ],
+        )
+
     @app.get("/plans", response_model=list[PlanSummaryResponse])
     def list_plans(status: str | None = Query(default=None)) -> list[PlanSummaryResponse]:
         plan_status = _parse_optional_plan_status(status)
@@ -108,6 +154,27 @@ def create_app(
 
     @app.post("/plans", response_model=CreatePlanResponse)
     def create_plan(request: CreatePlanRequest) -> CreatePlanResponse:
+        assistant_context = container.assistant.run_intake(
+            title=request.title,
+            description=request.description,
+            target_start_date=request.target_start_date,
+            target_end_date=request.target_end_date,
+            references=[reference.dict() for reference in request.references],
+            clarification_answers=request.clarification_answers,
+            use_web_search=True,
+        )
+        constraints = dict(request.constraints)
+        if request.clarification_answers:
+            constraints["clarification_answers"] = request.clarification_answers
+        if request.assistant_summary or assistant_context.assistant_summary:
+            constraints["assistant_summary"] = request.assistant_summary or assistant_context.assistant_summary
+        if assistant_context.references_summary:
+            constraints["references_summary"] = assistant_context.references_summary
+        if assistant_context.search_results:
+            constraints["web_search_summary"] = [
+                {"title": item.title, "url": item.url, "content": item.content}
+                for item in assistant_context.search_results
+            ]
         goal = GoalInput(
             title=request.title,
             description=request.description,
@@ -117,10 +184,14 @@ def create_app(
                 _availability_from_model(window)
                 for window in request.availability
             ],
-            constraints=request.constraints,
+            constraints=constraints,
         )
         service = container.get_service(request.planner)
-        goal_id, plan_version_id = service.create_plan(PlanningRequest(goal=goal))
+        goal_id, plan_version_id = service.create_plan(
+            PlanningRequest(goal=goal),
+            references=[reference.dict() for reference in request.references],
+            assistant_summary=request.assistant_summary or assistant_context.assistant_summary,
+        )
 
         if request.auto_approve:
             result = service.approve_and_schedule(plan_version_id)
@@ -209,7 +280,7 @@ def create_app(
 
     @app.post("/tasks/{task_id}/feedback", response_model=FeedbackResponse)
     def record_feedback(task_id: int, request: FeedbackRequest, planner: str = Query(default="mock")) -> FeedbackResponse:
-        _ensure_task_exists(container.database, task_id)
+        task = _ensure_task_exists(container.database, task_id)
         try:
             task_status = TaskStatus(request.status)
         except ValueError as exc:
@@ -233,7 +304,47 @@ def create_app(
             reason=outcome.reason,
             requires_user_confirmation=outcome.requires_user_confirmation,
             details=outcome.details,
+            assistant_review=container.assistant.build_feedback_review(
+                task=task,
+                status=task_status,
+                note=request.note,
+                policy_reason=outcome.reason,
+                requires_user_confirmation=outcome.requires_user_confirmation,
+            ),
         )
+
+    @app.post("/plans/{plan_version_id}/assistant/messages", response_model=AssistantMessageResponse)
+    def assistant_message(plan_version_id: int, request: AssistantMessageRequest) -> AssistantMessageResponse:
+        _ensure_plan_exists(container.database, plan_version_id)
+        detail = _build_plan_detail(container.database, plan_version_id)
+        current_summary = container.database.get_assistant_summary(plan_version_id)
+        reply, updated_summary, actions = container.assistant.reply_to_message(
+            message=request.message,
+            plan=detail.plan.dict(),
+            tasks=[task.dict() for task in detail.tasks],
+            schedule_blocks=[block.dict() for block in detail.schedule_blocks],
+            current_summary=current_summary,
+        )
+        container.database.upsert_assistant_summary(plan_version_id, updated_summary)
+        return AssistantMessageResponse(
+            reply=reply,
+            updated_summary=updated_summary,
+            suggested_actions=[
+                SuggestedAction(
+                    action=action["action"],
+                    label=action["label"],
+                    payload=action.get("payload", {}),
+                )
+                for action in actions
+            ],
+        )
+
+    @app.post("/plans/{plan_version_id}/assistant/replan", response_model=ProposalResponse)
+    def assistant_replan(
+        plan_version_id: int,
+        request: GenerateReplanRequest,
+    ) -> ProposalResponse:
+        return generate_replan(plan_version_id, request)
 
     @app.get("/plans/{plan_version_id}/proposals", response_model=list[ProposalResponse])
     def list_proposals(plan_version_id: int) -> list[ProposalResponse]:
@@ -256,6 +367,48 @@ def create_app(
             service.reject_proposal(proposal_id)
         updated = container.database.get_proposal(proposal_id)
         return ProposalResponse(**updated)
+
+    @app.get("/plans/{plan_version_id}/history", response_model=PlanHistoryResponse)
+    def plan_history(plan_version_id: int) -> PlanHistoryResponse:
+        plan = _ensure_plan_exists(container.database, plan_version_id)
+        versions = container.database.list_plan_versions_for_goal(plan["goal_id"])
+        active_id = next((item["id"] for item in versions if item["status"] == PlanStatus.ACTIVE.value), None)
+        if plan["status"] == PlanStatus.SUPERSEDED.value:
+            revert_target = plan_version_id
+        else:
+            revert_target = container.database.find_previous_plan_version_id(plan_version_id)
+        return PlanHistoryResponse(
+            goal_id=plan["goal_id"],
+            active_plan_version_id=active_id,
+            current_plan_version_id=plan_version_id,
+            revert_target_plan_version_id=revert_target,
+            revert_eligible=revert_target is not None,
+            versions=[
+                PlanVersionHistoryItem(
+                    plan_version_id=item["id"],
+                    version_number=item["version_number"],
+                    status=item["status"],
+                    title=item["title"],
+                    summary=item["summary"],
+                    created_at=item["created_at"],
+                )
+                for item in versions
+            ],
+        )
+
+    @app.post("/plans/{plan_version_id}/revert", response_model=ScheduleActionResponse)
+    def revert_plan(plan_version_id: int, planner: str = Query(default="mock")) -> ScheduleActionResponse:
+        _ensure_plan_exists(container.database, plan_version_id)
+        try:
+            target_plan_version_id, result = container.get_service(planner).revert_plan(plan_version_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return ScheduleActionResponse(
+            plan_version_id=target_plan_version_id,
+            status=container.database.get_plan_version(target_plan_version_id)["status"],
+            scheduled_blocks=len(result.blocks),
+            conflicts=[asdict(conflict) for conflict in result.conflicts],
+        )
 
     @app.post("/reminders/deliver", response_model=DeliverRemindersResponse)
     def deliver_reminders(request: DeliverRemindersRequest) -> DeliverRemindersResponse:

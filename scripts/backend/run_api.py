@@ -12,7 +12,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from adaptive_planner.api import create_app  # noqa: E402
-from adaptive_planner.gemma_adapter import GemmaPlannerConfig  # noqa: E402
+from adaptive_planner.gemma_adapter import (  # noqa: E402
+    DEFAULT_MODEL_PATH,
+    DEFAULT_SERVER_PATH,
+    GemmaPlannerConfig,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,13 +36,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model-path",
-        default=str(REPO_ROOT / "models" / "gemma4" / "gemma-4-E2B-it-Q4_K_M.gguf"),
+        default=str(DEFAULT_MODEL_PATH),
         help="GGUF model path for Gemma planner requests.",
     )
     parser.add_argument(
         "--server-path",
-        default=str(REPO_ROOT / "llama-cpp" / "llama-server.exe"),
+        default=str(DEFAULT_SERVER_PATH),
         help="llama-server executable path for Gemma planner requests.",
+    )
+    parser.add_argument(
+        "--flash-attn",
+        choices=("on", "off", "auto"),
+        default="off",
+        help="Flash attention mode. Use 'on' when overriding to the Gemma 4B Prism profile.",
     )
     return parser.parse_args()
 
@@ -51,6 +61,7 @@ def main() -> None:
             port=args.gemma_port,
             model_path=Path(args.model_path),
             server_path=Path(args.server_path),
+            flash_attn=args.flash_attn,
         ),
     )
     uvicorn.run(app, host=args.host, port=args.port)

@@ -21,10 +21,24 @@ class MockPlannerBackend(PlannerBackend):
             1,
             (request.goal.target_end_date - request.goal.target_start_date).days + 1,
         )
-        base_minutes = max(90, (duration_days * 60) // 4)
         goal_text = f"{request.goal.title} {request.goal.description}".lower()
 
-        if "learn" in goal_text or "study" in goal_text or "exam" in goal_text:
+        is_learning_goal = any(
+            term in goal_text
+            for term in ("learn", "study", "exam", "revise", "revision", "practice", "interview")
+        )
+        is_python_goal = "python" in goal_text
+
+        if is_python_goal:
+            task_templates = [
+                ("basics", "Refresh Python syntax, variables, data types, operators, and input/output."),
+                ("control-flow", "Practice conditionals, loops, and simple tracing problems."),
+                ("structures", "Revise lists, tuples, sets, dictionaries, and common operations."),
+                ("functions", "Practice functions, scope, modules, imports, and reusable code structure."),
+                ("intermediate", "Review exceptions, file handling, and OOP basics with small examples."),
+                ("practice", "Solve mixed practice problems and write a short final revision sheet."),
+            ]
+        elif is_learning_goal:
             task_templates = [
                 ("scope", "Define the learning scope and gather the core resources."),
                 ("concepts", "Study the core concepts in a structured sequence."),
@@ -38,6 +52,10 @@ class MockPlannerBackend(PlannerBackend):
                 ("execute", "Do the core execution work in focused sessions."),
                 ("review", "Review progress, refine work, and close gaps."),
             ]
+
+        base_minutes = max(60, min(120, (duration_days * 60) // max(len(task_templates), 1)))
+        if not is_learning_goal and not is_python_goal:
+            base_minutes = max(90, base_minutes)
 
         tasks: list[TaskProposal] = []
         previous_key: str | None = None

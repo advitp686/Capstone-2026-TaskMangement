@@ -180,6 +180,40 @@ class PlannerDatabase:
                 ).fetchall()
             return [dict(row) for row in rows]
 
+    def list_plan_versions_for_goal(self, goal_id: int) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM plan_versions
+                WHERE goal_id = ?
+                ORDER BY version_number, id
+                """,
+                (goal_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def find_previous_plan_version_id(self, plan_version_id: int) -> int | None:
+        current = self.get_plan_version(plan_version_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id
+                FROM plan_versions
+                WHERE goal_id = ?
+                  AND version_number < ?
+                  AND status = ?
+                ORDER BY version_number DESC, id DESC
+                LIMIT 1
+                """,
+                (
+                    current["goal_id"],
+                    current["version_number"],
+                    PlanStatus.SUPERSEDED.value,
+                ),
+            ).fetchone()
+            return int(row["id"]) if row is not None else None
+
     def list_tasks(self, plan_version_id: int) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -331,6 +365,76 @@ class PlannerDatabase:
                 (plan_version_id,),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def create_plan_references(
+        self,
+        goal_id: int,
+        plan_version_id: int | None,
+        references: list[dict[str, Any]],
+    ) -> None:
+        if not references:
+            return
+        with self._connect() as connection:
+            for reference in references:
+                filename = str(reference.get("filename") or "reference.txt").strip() or "reference.txt"
+                kind = str(reference.get("kind") or "text").strip().lower()
+                if kind not in {"markdown", "text"}:
+                    kind = "text"
+                content = str(reference.get("content") or "")
+                if not content.strip():
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO plan_references (goal_id, plan_version_id, filename, kind, content, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        goal_id,
+                        plan_version_id,
+                        filename[:240],
+                        kind,
+                        content,
+                        datetime.now().isoformat(),
+                    ),
+                )
+
+    def list_plan_references(self, plan_version_id: int) -> list[dict[str, Any]]:
+        plan = self.get_plan_version(plan_version_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM plan_references
+                WHERE plan_version_id = ? OR goal_id = ?
+                ORDER BY created_at, id
+                """,
+                (plan_version_id, plan["goal_id"]),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def upsert_assistant_summary(self, plan_version_id: int, summary: str) -> None:
+        cleaned = summary.strip()
+        if not cleaned:
+            return
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO assistant_summaries (plan_version_id, summary, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(plan_version_id) DO UPDATE SET
+                    summary = excluded.summary,
+                    updated_at = excluded.updated_at
+                """,
+                (plan_version_id, cleaned, datetime.now().isoformat()),
+            )
+
+    def get_assistant_summary(self, plan_version_id: int) -> str:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT summary FROM assistant_summaries WHERE plan_version_id = ?",
+                (plan_version_id,),
+            ).fetchone()
+            return str(row["summary"]) if row is not None else ""
 
     def get_due_reminders(
         self,

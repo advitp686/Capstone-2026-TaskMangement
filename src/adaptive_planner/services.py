@@ -32,7 +32,13 @@ class PlanningService:
         self.scheduler = scheduler or DeterministicScheduler()
         self.feedback_policy = feedback_policy or FeedbackPolicy()
 
-    def create_plan(self, request: PlanningRequest) -> tuple[int, int]:
+    def create_plan(
+        self,
+        request: PlanningRequest,
+        *,
+        references: list[dict] | None = None,
+        assistant_summary: str | None = None,
+    ) -> tuple[int, int]:
         active_plan_context = self.database.list_active_plan_context()
         enriched_request = PlanningRequest(
             goal=request.goal,
@@ -41,6 +47,9 @@ class PlanningService:
         goal_id = self.database.create_goal(request.goal)
         proposal = self.planner.create_plan(enriched_request)
         plan_version_id = self.database.save_plan_proposal(goal_id, proposal, status=PlanStatus.PROPOSED)
+        self.database.create_plan_references(goal_id, plan_version_id, references or [])
+        if assistant_summary:
+            self.database.upsert_assistant_summary(plan_version_id, assistant_summary)
         return goal_id, plan_version_id
 
     def approve_and_schedule(self, plan_version_id: int) -> ScheduleResult:
@@ -195,6 +204,18 @@ class PlanningService:
 
     def reject_proposal(self, proposal_id: int) -> None:
         self.database.update_proposal_status(proposal_id, ProposalStatus.REJECTED)
+
+    def revert_plan(self, plan_version_id: int) -> tuple[int, ScheduleResult]:
+        plan_version = self.database.get_plan_version(plan_version_id)
+        if PlanStatus(plan_version["status"]) == PlanStatus.SUPERSEDED:
+            target_plan_version_id = plan_version_id
+        else:
+            target_plan_version_id = self.database.find_previous_plan_version_id(plan_version_id)
+            if target_plan_version_id is None:
+                raise ValueError("no previous plan version is available to restore")
+
+        result = self._schedule_plan(target_plan_version_id)
+        return target_plan_version_id, result
 
     def edit_task(
         self,

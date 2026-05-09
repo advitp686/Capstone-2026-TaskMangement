@@ -17,8 +17,10 @@ from .planner import PlannerBackend
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SERVER_PATH = REPO_ROOT / "llama-cpp" / "llama-server.exe"
-DEFAULT_MODEL_PATH = REPO_ROOT / "models" / "gemma4" / "gemma-4-E2B-it-Q4_K_M.gguf"
+DEFAULT_SERVER_PATH = Path(
+    r"F:\CAPSTONE - Copy\artifacts\benchmarks\tools\prism-win-vulkan-merged\llama-server.exe"
+)
+DEFAULT_MODEL_PATH = Path(r"F:\CAPSTONE - Copy\models\gemma4\gemma-4-E2B-it-Q4_K_M.gguf")
 DEFAULT_LOG_PATH = REPO_ROOT / "artifacts" / "runtime" / "gemma_planner.server.log"
 
 
@@ -32,14 +34,14 @@ class GemmaPlannerConfig:
     server_path: Path = DEFAULT_SERVER_PATH
     host: str = "127.0.0.1"
     port: int = 8091
-    context_size: int = 4096
-    max_completion_tokens: int = 1400
-    reasoning_budget: int = 192
+    context_size: int = 8192
+    max_completion_tokens: int = 768
+    reasoning_budget: int = 256
     temperature: float = 0.1
     threads: int = 6
     threads_batch: int = 6
-    batch_size: int = 1024
-    ubatch_size: int = 256
+    batch_size: int = 256
+    ubatch_size: int = 128
     parallel: int = 1
     seed: int = 42
     startup_timeout_sec: int = 180
@@ -48,9 +50,13 @@ class GemmaPlannerConfig:
     auto_start_server: bool = True
     reasoning_enabled: bool = True
     no_mmap: bool = True
-    mlock: bool = True
-    device: str = "none"
-    gpu_layers: int = 0
+    mlock: bool = False
+    cache_ram_mib: int = 0
+    cache_type_k: str = "f16"
+    cache_type_v: str = "f16"
+    flash_attn: str = "off"
+    device: str = "Vulkan1"
+    gpu_layers: int = 99
     log_path: Path = DEFAULT_LOG_PATH
 
     @property
@@ -160,6 +166,12 @@ class GemmaPlannerBackend(PlannerBackend):
             str(cfg.reasoning_budget),
             "--reasoning-format",
             "deepseek",
+            "--cache-ram",
+            str(cfg.cache_ram_mib),
+            "--cache-type-k",
+            cfg.cache_type_k,
+            "--cache-type-v",
+            cfg.cache_type_v,
             "--log-file",
             cfg.log_path,
         ]
@@ -177,7 +189,7 @@ class GemmaPlannerBackend(PlannerBackend):
                     "none",
                     "--no-op-offload",
                     "--flash-attn",
-                    "off",
+                    cfg.flash_attn,
                 ]
             )
         else:
@@ -188,7 +200,7 @@ class GemmaPlannerBackend(PlannerBackend):
                     "-dev",
                     cfg.device,
                     "--flash-attn",
-                    "auto",
+                    cfg.flash_attn,
                 ]
             )
         return cmd
@@ -284,6 +296,7 @@ class GemmaPlannerBackend(PlannerBackend):
             f"Plan end date: {goal.target_end_date.isoformat()}\n"
             f"Availability windows: {self._format_availability(goal)}\n"
             f"Constraints: {json.dumps(goal.constraints, ensure_ascii=False)}\n"
+            f"Assistant planning context: {self._format_assistant_context(goal.constraints)}\n"
             f"Existing active plan context: {json.dumps(request.active_plan_context, ensure_ascii=False)}\n\n"
             "Return a JSON object with this exact shape:\n"
             "{\n"
@@ -303,7 +316,9 @@ class GemmaPlannerBackend(PlannerBackend):
             "  ]\n"
             "}\n\n"
             "Rules:\n"
-            "- Return between 4 and 6 tasks.\n"
+            "- Return between 6 and 10 tasks for learning, revision, interview, or technical study goals.\n"
+            "- For Python or programming goals, name concrete topics and hands-on practice work.\n"
+            "- Use task summaries to include what counts as complete.\n"
             "- Use dependency links only when necessary.\n"
             "- Do not assign exact clock times.\n"
             "- Keep tasks realistic for the date range.\n"
@@ -354,6 +369,7 @@ class GemmaPlannerBackend(PlannerBackend):
             "}\n\n"
             "Rules:\n"
             "- Insert recovery or prerequisite steps if needed.\n"
+            "- If the user says the plan is vague, replace vague work with concrete topic and practice steps.\n"
             "- Keep unaffected work when possible.\n"
             "- Do not assign exact clock times.\n"
             "- Keep the replan summary under 70 words.\n"
@@ -523,3 +539,13 @@ class GemmaPlannerBackend(PlannerBackend):
                 }
             )
         return json.dumps(formatted, ensure_ascii=False)
+
+    def _format_assistant_context(self, constraints: dict[str, Any]) -> str:
+        keys = (
+            "assistant_summary",
+            "clarification_answers",
+            "references_summary",
+            "web_search_summary",
+        )
+        context = {key: constraints.get(key) for key in keys if constraints.get(key)}
+        return json.dumps(context, ensure_ascii=False)

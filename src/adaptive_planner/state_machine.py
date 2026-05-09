@@ -29,7 +29,7 @@ PLAN_TRANSITIONS: dict[PlanStatus, set[PlanStatus]] = {
         PlanStatus.ABANDONED,
         PlanStatus.SUPERSEDED,
     },
-    PlanStatus.SUPERSEDED: set(),
+    PlanStatus.SUPERSEDED: {PlanStatus.ACTIVE},
     PlanStatus.COMPLETED: set(),
     PlanStatus.ABANDONED: set(),
 }

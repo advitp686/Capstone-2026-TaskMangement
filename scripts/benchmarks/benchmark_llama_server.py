@@ -8,11 +8,13 @@ from pathlib import Path
 
 import requests
 
-from common_paths import LLAMA_CPP_DIR, LOGS_DIR, MODELS_DIR, REPO_ROOT, RESULTS_DIR
+from common_paths import LOGS_DIR, REPO_ROOT, RESULTS_DIR
 from benchmark_gemma_chat import PROMPTS, SYSTEM_PROMPT
 
-DEFAULT_SERVER = LLAMA_CPP_DIR / "llama-server.exe"
-DEFAULT_MODEL = MODELS_DIR / "gemma4" / "gemma-4-E2B-it-Q4_K_M.gguf"
+DEFAULT_SERVER = Path(
+    r"F:\CAPSTONE - Copy\artifacts\benchmarks\tools\prism-win-vulkan-merged\llama-server.exe"
+)
+DEFAULT_MODEL = Path(r"F:\CAPSTONE - Copy\models\gemma4\gemma-4-E2B-it-Q4_K_M.gguf")
 
 
 def parse_args():
@@ -48,7 +50,7 @@ def parse_args():
     parser.add_argument(
         "--ctx",
         type=int,
-        default=2048,
+        default=8192,
         help="Context size for llama-server.",
     )
     parser.add_argument(
@@ -56,6 +58,12 @@ def parse_args():
         type=int,
         default=768,
         help="Maximum completion tokens per prompt.",
+    )
+    parser.add_argument(
+        "--reasoning-mode",
+        choices=("on", "off"),
+        default="on",
+        help="Whether to launch llama-server with reasoning enabled or disabled.",
     )
     parser.add_argument(
         "--reasoning-budget",
@@ -78,14 +86,24 @@ def parse_args():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=1024,
+        default=256,
         help="Logical batch size to limit memory spikes.",
     )
     parser.add_argument(
         "--ubatch-size",
         type=int,
-        default=256,
+        default=128,
         help="Physical batch size to limit memory spikes.",
+    )
+    parser.add_argument(
+        "--cache-type-k",
+        default="f16",
+        help="K cache type passed to llama-server, e.g. f16 or q4_0.",
+    )
+    parser.add_argument(
+        "--cache-type-v",
+        default="f16",
+        help="V cache type passed to llama-server, e.g. f16 or q4_0.",
     )
     parser.add_argument(
         "--gpu-layers",
@@ -94,26 +112,34 @@ def parse_args():
     )
     parser.add_argument(
         "--device",
-        default="Vulkan0",
+        default="Vulkan1",
         help="Device name list for llama-server, e.g. Vulkan0 or Vulkan0,Vulkan1.",
-    )
-    parser.add_argument(
-        "--main-gpu",
-        type=int,
-        default=0,
-        help="Main GPU index.",
-    )
-    parser.add_argument(
-        "--fit-target-mib",
-        type=int,
-        default=512,
-        help="VRAM margin to leave free when fit auto-adjusts.",
     )
     parser.add_argument(
         "--parallel",
         type=int,
         default=1,
         help="Number of parallel decode slots for the server.",
+    )
+    parser.add_argument(
+        "--cache-ram",
+        "--cache-ram-mib",
+        dest="cache_ram",
+        type=int,
+        default=0,
+        help="Prompt-cache RAM budget passed to llama-server. Use 0 to disable prompt cache.",
+    )
+    parser.add_argument(
+        "--mlock",
+        choices=("on", "off"),
+        default="off",
+        help="Whether to pass --mlock to llama-server.",
+    )
+    parser.add_argument(
+        "--flash-attn",
+        choices=("on", "off", "auto"),
+        default="off",
+        help="Flash attention mode passed to llama-server.",
     )
     parser.add_argument(
         "--temperature",
@@ -167,18 +193,31 @@ def build_server_command(args, log_path):
         args.host,
         "--port",
         str(args.port),
-        "--reasoning",
-        "on",
-        "--reasoning-format",
-        "deepseek",
-        "--reasoning-budget",
-        str(args.reasoning_budget),
-        "--mlock",
         "--no-mmap",
         "--perf",
+        "--cache-ram",
+        str(args.cache_ram),
+        "--cache-type-k",
+        str(args.cache_type_k),
+        "--cache-type-v",
+        str(args.cache_type_v),
         "--log-file",
         str(log_path),
     ]
+
+    if args.mlock == "on":
+        cmd.append("--mlock")
+
+    cmd.extend(["--reasoning", args.reasoning_mode])
+    if args.reasoning_mode == "on":
+        cmd.extend(
+            [
+                "--reasoning-format",
+                "deepseek",
+                "--reasoning-budget",
+                str(args.reasoning_budget),
+            ]
+        )
 
     if use_gpu:
         cmd.extend(
@@ -187,16 +226,8 @@ def build_server_command(args, log_path):
                 str(args.gpu_layers),
                 "-dev",
                 str(args.device),
-                "-mg",
-                str(args.main_gpu),
-                "-fit",
-                "on",
-                "-fitt",
-                str(args.fit_target_mib),
-                "-fitc",
-                str(args.ctx),
                 "--flash-attn",
-                "auto",
+                args.flash_attn,
             ]
         )
     else:
@@ -208,7 +239,7 @@ def build_server_command(args, log_path):
                 "none",
                 "--no-op-offload",
                 "--flash-attn",
-                "off",
+                args.flash_attn,
             ]
         )
 
@@ -469,16 +500,21 @@ def save_results(args, log_path, results, summary, output_dir):
             "port": args.port,
             "ctx": args.ctx,
             "max_tokens": args.max_tokens,
+            "reasoning_mode": args.reasoning_mode,
             "reasoning_budget": args.reasoning_budget,
             "threads": args.threads,
             "threads_batch": args.threads_batch,
             "batch_size": args.batch_size,
             "ubatch_size": args.ubatch_size,
+            "cache_type_k": args.cache_type_k,
+            "cache_type_v": args.cache_type_v,
+            "cache_ram": args.cache_ram,
             "gpu_layers": args.gpu_layers,
             "device": args.device,
-            "main_gpu": args.main_gpu,
-            "fit_target_mib": args.fit_target_mib,
             "parallel": args.parallel,
+            "mlock": args.mlock,
+            "no_mmap": True,
+            "flash_attn": args.flash_attn,
             "temperature": args.temperature,
             "seed": args.seed,
             "max_prompts": args.max_prompts,

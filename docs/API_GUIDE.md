@@ -36,6 +36,19 @@ Important fields:
 
 - `planner`: `mock` or `gemma`
 - `auto_approve`: if `true`, the backend immediately tries to schedule the plan
+- `references`: optional Markdown/text reference payloads for the assistant context
+- `clarification_answers`: optional answers from the intake step
+- `assistant_summary`: optional compact assistant planning summary
+
+### `POST /assistant/intake`
+
+Analyze a goal before plan creation. The endpoint can:
+
+- detect broad or complex goals
+- return multiple-choice clarification questions
+- summarize Markdown/text references
+- use Tavily web search when `TAVILY_API_KEY` is configured
+- continue without web search when Tavily is unavailable
 
 ### `GET /plans`
 
@@ -74,6 +87,22 @@ Important fields:
 - `planner`
 - `trigger_task_id`
 - `trigger_reason`
+
+### `POST /plans/{plan_version_id}/assistant/messages`
+
+Send a plan-aware assistant message. The assistant sees the selected plan, tasks, schedule blocks, and saved summary. It returns a response plus suggested actions such as a safer replan request.
+
+### `POST /plans/{plan_version_id}/assistant/replan`
+
+Create a replan proposal through the assistant flow. The plan is not changed until the user applies the returned proposal.
+
+### `GET /plans/{plan_version_id}/history`
+
+Show all versions for the same goal and whether a previous version can be restored.
+
+### `POST /plans/{plan_version_id}/revert`
+
+Reactivate the previous superseded plan version and regenerate schedule blocks and reminders.
 
 ### `PATCH /tasks/{task_id}`
 

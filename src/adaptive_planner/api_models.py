@@ -7,12 +7,72 @@ from pydantic import BaseModel, Field
 
 
 PlannerMode = Literal["mock", "gemma"]
+ReferenceKind = Literal["markdown", "text"]
 
 
 class AvailabilityWindowModel(BaseModel):
     weekday: int = Field(..., ge=0, le=6)
     start_time: time
     end_time: time
+
+
+class ReferenceInput(BaseModel):
+    filename: str
+    kind: ReferenceKind
+    content: str
+
+
+class ClarificationQuestion(BaseModel):
+    id: str
+    prompt: str
+    recommended_option: str
+    options: list[str]
+    allow_custom: bool = True
+
+
+class SearchResultResponse(BaseModel):
+    title: str
+    url: str
+    content: str
+
+
+class AssistantIntakeRequest(BaseModel):
+    title: str
+    description: str
+    target_start_date: date
+    target_end_date: date
+    availability: list[AvailabilityWindowModel]
+    references: list[ReferenceInput] = Field(default_factory=list)
+    clarification_answers: dict[str, str] = Field(default_factory=dict)
+    use_web_search: bool = True
+
+
+class AssistantIntakeResponse(BaseModel):
+    requires_clarification: bool
+    questions: list[ClarificationQuestion] = Field(default_factory=list)
+    readiness_summary: str
+    assistant_summary: str
+    references_summary: str = ""
+    web_search_used: bool = False
+    web_search_available: bool = False
+    web_search_message: str = ""
+    search_results: list[SearchResultResponse] = Field(default_factory=list)
+
+
+class SuggestedAction(BaseModel):
+    action: str
+    label: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssistantMessageRequest(BaseModel):
+    message: str
+
+
+class AssistantMessageResponse(BaseModel):
+    reply: str
+    updated_summary: str
+    suggested_actions: list[SuggestedAction] = Field(default_factory=list)
 
 
 class CreatePlanRequest(BaseModel):
@@ -24,6 +84,9 @@ class CreatePlanRequest(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     planner: PlannerMode = "mock"
     auto_approve: bool = False
+    references: list[ReferenceInput] = Field(default_factory=list)
+    clarification_answers: dict[str, str] = Field(default_factory=dict)
+    assistant_summary: str | None = None
 
 
 class EditTaskRequest(BaseModel):
@@ -154,8 +217,35 @@ class FeedbackResponse(BaseModel):
     reason: str
     requires_user_confirmation: bool
     details: dict[str, Any]
+    assistant_review: dict[str, Any] | None = None
 
 
 class DeliverRemindersResponse(BaseModel):
     delivered_count: int
     reminders: list[dict[str, Any]]
+
+
+class PlanReferenceResponse(BaseModel):
+    id: int
+    filename: str
+    kind: ReferenceKind
+    content_preview: str
+    created_at: datetime
+
+
+class PlanVersionHistoryItem(BaseModel):
+    plan_version_id: int
+    version_number: int
+    status: str
+    title: str
+    summary: str
+    created_at: datetime
+
+
+class PlanHistoryResponse(BaseModel):
+    goal_id: int
+    active_plan_version_id: int | None
+    current_plan_version_id: int
+    revert_target_plan_version_id: int | None
+    revert_eligible: bool
+    versions: list[PlanVersionHistoryItem]

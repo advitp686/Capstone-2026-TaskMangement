@@ -78,7 +78,7 @@ class OverallSystemFlowTests(unittest.TestCase):
             self.assertEqual(database.get_proposal(rebalance["id"])["status"], ProposalStatus.APPLIED.value)
             self.assertEqual(database.get_plan_version(plan_two_id)["status"], "active")
 
-            delivered = reminder_service.deliver_due_reminders(datetime(2026, 4, 6, 17, 50))
+            delivered = reminder_service.deliver_due_reminders(datetime(2026, 4, 6, 18, 0))
             self.assertTrue(delivered)
 
             first_task = database.list_tasks(plan_two_id)[0]

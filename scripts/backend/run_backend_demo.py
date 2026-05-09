@@ -24,6 +24,7 @@ from adaptive_planner import (  # noqa: E402
     PolicyAction,
     TaskStatus,
 )
+from adaptive_planner.gemma_adapter import DEFAULT_MODEL_PATH, DEFAULT_SERVER_PATH  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,25 +43,31 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model-path",
-        default=str(REPO_ROOT / "models" / "gemma4" / "gemma-4-E2B-it-Q4_K_M.gguf"),
+        default=str(DEFAULT_MODEL_PATH),
         help="GGUF model path for the Gemma planner.",
     )
     parser.add_argument(
         "--server-path",
-        default=str(REPO_ROOT / "llama-cpp" / "llama-server.exe"),
+        default=str(DEFAULT_SERVER_PATH),
         help="llama-server executable path for the Gemma planner.",
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=1200,
+        default=768,
         help="Maximum completion tokens for the Gemma planner.",
     )
     parser.add_argument(
         "--reasoning-budget",
         type=int,
-        default=192,
+        default=256,
         help="Reasoning budget for the Gemma planner.",
+    )
+    parser.add_argument(
+        "--flash-attn",
+        choices=("on", "off", "auto"),
+        default="off",
+        help="Flash attention mode. Use 'on' when overriding to the Gemma 4B Prism profile.",
     )
     return parser.parse_args()
 
@@ -74,6 +81,7 @@ def build_planner(args: argparse.Namespace) -> PlannerBackend:
                 server_path=Path(args.server_path),
                 max_completion_tokens=args.max_tokens,
                 reasoning_budget=args.reasoning_budget,
+                flash_attn=args.flash_attn,
             )
         )
     return MockPlannerBackend()

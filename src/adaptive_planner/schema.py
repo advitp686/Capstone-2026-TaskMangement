@@ -117,10 +117,28 @@ CREATE TABLE IF NOT EXISTS user_edit_events (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS plan_references (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+    plan_version_id INTEGER REFERENCES plan_versions(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS assistant_summaries (
+    plan_version_id INTEGER PRIMARY KEY REFERENCES plan_versions(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_plan_version_id ON tasks(plan_version_id);
 CREATE INDEX IF NOT EXISTS idx_schedule_blocks_plan_version_id ON schedule_blocks(plan_version_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_events_task_id ON feedback_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_proposals_plan_version_id ON proposals(plan_version_id);
+CREATE INDEX IF NOT EXISTS idx_plan_references_goal_id ON plan_references(goal_id);
+CREATE INDEX IF NOT EXISTS idx_plan_references_plan_version_id ON plan_references(plan_version_id);
 """
 
 
